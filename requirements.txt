@@ -1,0 +1,3 @@
+datasets==3.1.0        # for loading datasets
+pyyaml==6.0.1          # for loading yaml files
+autoawq==0.2.8         # for AWQ models
