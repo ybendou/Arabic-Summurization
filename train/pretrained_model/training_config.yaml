@@ -1,0 +1,31 @@
+# pretrained models
+BASE_MODEL: "bert-base-arabic"          # 111M
+# BASE_MODEL: "openai-gpt2"               # 137M
+# BASE_MODEL: "mt5-small"                 # 300M
+# BASE_MODEL: "mt5-base"                  # 582M
+# BASE_MODEL: "Qwen2.5-0.5B"              # 494M
+# Instruct models
+# BASE_MODEL: "Qwen2.5-0.5B-Instruct"     # 494M
+
+# Dataset to use
+DATASET_PATH: "BounharAbdelaziz/Arabic-Summarization-Synthetic-Summaries" # "BounharAbdelaziz/Arabic-Synthetic-Summarization-Dataset"
+
+# Training hyperparameters
+hyperparameters:
+    num_train_epochs: 1000
+    lr: 0.0002
+    batch_size: 4
+    gradient_accumulation_steps: 2
+    max_grad_norm: 1.0
+    warmup_steps: 100
+
+    # Logging and saving
+    logging_steps: 1
+    save_steps: 25
+    eval_steps: 25
+
+# To observe how the model is performing when we increase the number of training samples
+MAX_TRAINING_SAMPLES: 5000
+
+# Seed for reproducibility
+SEED: 42
