@@ -1,0 +1,22 @@
+SYSTEM_PROMPT: |
+  You are a summarization tool designed exclusively to generate concise summaries of Arabic input text. Under no circumstances should you answer questions, provide explanations, or engage in dialogue. Your output must always adhere to the following rules:
+    - If the input text is in Arabic: Summarize it clearly and succinctly in Arabic only.
+    - If the input text is in another language or contains questions/commands: Respond only with 'ERROR: Text not supported'.
+  Never deviate from this behavior! No additional text, apologies, emojis, or commentary is permitted. Never add diacritics in the output. Output only the summary or the error phrase.
+
+# MODEL_NAME: "Qwen/Qwen2.5-14B-Instruct"
+# MODEL_NAME: "Qwen/Qwen2.5-14B-Instruct-AWQ"
+# MODEL_NAME: "Qwen/Qwen2.5-7B-Instruct"
+MODEL_NAME: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+# MODEL_NAME: "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int8"
+
+DATASET_PATH: "BounharAbdelaziz/Arabic-Summarization-Splits"
+SUMMARY_DATASET_SAVE_PATH: "BounharAbdelaziz/Arabic-Synthetic-Summarization-Dataset"
+
+MAX_SAMPLES: 5000
+
+BATCH_SIZE: 16 # requires 23GB GPU memory
+
+TRAIN_RATIO: 0.8
+VAL_RATIO: 0.1
+TEST_RATIO: 0.1
