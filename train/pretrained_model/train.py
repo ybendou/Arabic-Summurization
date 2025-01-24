@@ -25,11 +25,17 @@ from pprint import pprint
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-from torchmetrics.text.rouge import ROUGEScore
-from torchmetrics.text.bleu import BLEUScore
+# from torchmetrics.text.rouge import ROUGEScore
+# from torchmetrics.text.bleu import BLEUScore
 
-rouge_metric = ROUGEScore()
-bleu_metric = BLEUScore()
+# rouge_metric = ROUGEScore()
+# bleu_metric = BLEUScore()
+
+
+from evaluate import load
+
+rouge = load('rouge')
+bleu = load('bleu')
 
 @torch.no_grad()
 def compute_metrics_causal_lm(eval_pred):
@@ -57,15 +63,15 @@ def compute_metrics_causal_lm(eval_pred):
     text_labels = ["\n".join(np.char.strip(sent_tokenizer.tokenize(l))) for l in text_labels]
     
     # Compute metrics
-    rouge_results = rouge_metric.compute(predictions=text_preds, references=text_labels)
-    bleu_results = bleu_metric.compute(predictions=text_preds, references=text_labels)
+    rouge_results = rouge.compute(predictions=text_preds, references=text_labels)
+    bleu_results = bleu.compute(predictions=text_preds, references=text_labels)
     
     return {
-        "rouge1": rouge_results["rouge1"] * 100,    # in percentage
-        "rouge2": rouge_results["rouge2"] * 100,    # in percentage
-        "rougeL": rouge_results["rougeL"] * 100,    # in percentage
-        "rougeLSum": rouge_results["rougeLSum"] * 100,    # in percentage
-        "bleu": bleu_results["bleu"] * 100,          # in percentage
+        "rouge1": rouge_results["rouge1"] * 100,
+        "rouge2": rouge_results["rouge2"] * 100,
+        "rougeL": rouge_results["rougeL"] * 100,
+        "rougeLsum": rouge_results["rougeLsum"] * 100,
+        "bleu": bleu_results["bleu"] * 100,
     }
     
 @torch.no_grad()
@@ -104,11 +110,20 @@ def compute_metrics(eval_pred):
         "bleu": bleu_score * 100,
     }
 
+
+def preprocess_logits_for_metrics(logits, labels):
+    """
+    Original Trainer may have a memory leak. 
+    This is a workaround to avoid storing too many tensors that are not needed. 
+    Taken from https://discuss.huggingface.co/t/cuda-out-of-memory-when-using-trainer-with-compute-metrics/2941/22
+    """
+    pred_ids = torch.argmax(logits, dim=-1)
+    return pred_ids, labels
     
 def preprocess_function_causal_lm_sft_training(examples, input_column_name="text", target_column_name="summary"):
     # Format data in instruction-following style
     formatted_inputs = [
-        f"### Human: Summarize the following text in Arabic:\n{source_text}\n### Assistant: {summary}" 
+        f"### System: You are a summarization tool designed exclusively to generate concise summaries of Arabic input text.\n### Human: Summarize the following text in Arabic:\n{source_text}\n### Assistant: {summary}" 
         for source_text, summary in zip(examples[input_column_name], examples[target_column_name])
     ]
     
@@ -235,10 +250,20 @@ if __name__ == "__main__":
             "CAUSAL_LM": False,
             "SFT_TRAINING": False,
         },
+        "mt5-small-SFT": {
+            "MODEL_PATH": "google/mt5-small",
+            "CAUSAL_LM": False,
+            "SFT_TRAINING": True,
+        },
         "mt5-base": {
             "MODEL_PATH": "google/mt5-base",
             "CAUSAL_LM": False,
             "SFT_TRAINING": False,
+        },
+        "mt5-base-SFT": {
+            "MODEL_PATH": "google/mt5-base",
+            "CAUSAL_LM": False,
+            "SFT_TRAINING": True,
         },
         "Qwen2.5-0.5B": {
             "MODEL_PATH": "Qwen/Qwen2.5-0.5B",
@@ -316,6 +341,9 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
     # Set a maximum length for tokenization
     tokenizer.model_max_length = config['hyperparameters']['MAX_LEN']
+    if BASE_MODEL == "gpt2":
+        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+    
     print(f'[INFO] Model and Tokenizer loaded: {MODEL_PATH}')
     print('-'*50)
     
@@ -323,7 +351,7 @@ if __name__ == "__main__":
     project_name = "arabic-summarization"
     fp16 = 'FP16' if FP16_TRAINING else ''
     sft = 'SFT' if IS_SFT_TRAINING else ''
-    run_name = f'{MODEL_PATH.split("/")[-1]}-bs-{batch_size}-lr-{lr}-ep-{num_train_epochs}-wmp-{warmup_steps}-gacc-{gradient_accumulation_steps}-gnorm-{max_grad_norm}-{fp16}-{sft}'
+    run_name = f'{MODEL_PATH.split("/")[-1]}-bs-{batch_size}-lr-{lr}-ep-{num_train_epochs}-wmp-{warmup_steps}-gacc-{gradient_accumulation_steps}-gnorm-{max_grad_norm}-{fp16}-{sft}-mxln-{config['hyperparameters']['MAX_LEN']}'
     
     # Where to save the model
     MODEL_RUN_SAVE_PATH = f"BounharAbdelaziz/Arabic-Summarization/{run_name}"
@@ -364,7 +392,7 @@ if __name__ == "__main__":
                 warmup_ratio=warmup_ratio,
                 per_device_train_batch_size=batch_size,
                 per_device_eval_batch_size=batch_size // 2,
-                eval_accumulation_steps=config['hyperparameters']['eval_accumulation_steps'],  # Helps with memory management during evaluation
+                # eval_accumulation_steps=config['hyperparameters']['eval_accumulation_steps'],  # Helps with memory management during evaluation
                 num_train_epochs=num_train_epochs,
                 save_total_limit=1,
                 bf16=config['FP16_TRAINING'],
@@ -385,7 +413,8 @@ if __name__ == "__main__":
                 train_dataset=tokenized_datasets["train"],
                 eval_dataset=tokenized_datasets["validation"],
                 data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
-                compute_metrics=compute_metrics, #compute_metrics_causal_lm
+                compute_metrics=compute_metrics_causal_lm,
+                preprocess_logits_for_metrics=preprocess_logits_for_metrics, # avoids OOM in eval
             )
             
         else:
@@ -401,8 +430,8 @@ if __name__ == "__main__":
                 learning_rate=lr,
                 warmup_ratio=warmup_ratio,
                 per_device_train_batch_size=batch_size,
-                per_device_eval_batch_size=batch_size // 2,
-                eval_accumulation_steps=config['hyperparameters']['eval_accumulation_steps'],  # Helps with memory management during evaluation
+                per_device_eval_batch_size=batch_size, # // 2,
+                # eval_accumulation_steps=config['hyperparameters']['eval_accumulation_steps'],  # Helps with memory management during evaluation => tooo slow!
                 num_train_epochs=num_train_epochs,
                 save_total_limit=1,
                 bf16=config['FP16_TRAINING'],
@@ -423,7 +452,8 @@ if __name__ == "__main__":
                 train_dataset=tokenized_datasets["train"],
                 eval_dataset=tokenized_datasets["validation"],
                 data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
-                compute_metrics=compute_metrics, #compute_metrics_causal_lm
+                compute_metrics=compute_metrics_causal_lm,
+                preprocess_logits_for_metrics=preprocess_logits_for_metrics, # avoids OOM in eval
             )
         
     else:
