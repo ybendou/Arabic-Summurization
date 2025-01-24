@@ -97,17 +97,16 @@ def compute_metrics(eval_pred):
     text_preds = ["\n".join([s.strip() for s in sent_tokenizer.tokenize(p)]) for p in text_preds]
     text_labels = ["\n".join([s.strip() for s in sent_tokenizer.tokenize(l)]) for l in text_labels]
 
-    # Compute ROUGE
-    rouge_results = rouge_metric(text_preds, text_labels)
-    
-    # Compute BLEU
-    bleu_score = bleu_metric(text_preds, text_labels)
+    # Compute metrics
+    rouge_results = rouge.compute(predictions=text_preds, references=text_labels)
+    bleu_results = bleu.compute(predictions=text_preds, references=text_labels)
     
     return {
-        "rouge1": rouge_results["rouge1_fmeasure"] * 100,
-        "rouge2": rouge_results["rouge2_fmeasure"] * 100,
-        "rougeL": rouge_results["rougeL_fmeasure"] * 100,
-        "bleu": bleu_score * 100,
+        "rouge1": rouge_results["rouge1"] * 100,
+        "rouge2": rouge_results["rouge2"] * 100,
+        "rougeL": rouge_results["rougeL"] * 100,
+        "rougeLsum": rouge_results["rougeLsum"] * 100,
+        "bleu": bleu_results["bleu"] * 100,
     }
 
 
@@ -391,7 +390,7 @@ if __name__ == "__main__":
                 learning_rate=lr,
                 warmup_ratio=warmup_ratio,
                 per_device_train_batch_size=batch_size,
-                per_device_eval_batch_size=batch_size // 2,
+                per_device_eval_batch_size=batch_size,
                 # eval_accumulation_steps=config['hyperparameters']['eval_accumulation_steps'],  # Helps with memory management during evaluation
                 num_train_epochs=num_train_epochs,
                 save_total_limit=1,
@@ -430,7 +429,7 @@ if __name__ == "__main__":
                 learning_rate=lr,
                 warmup_ratio=warmup_ratio,
                 per_device_train_batch_size=batch_size,
-                per_device_eval_batch_size=batch_size, # // 2,
+                per_device_eval_batch_size=batch_size,
                 # eval_accumulation_steps=config['hyperparameters']['eval_accumulation_steps'],  # Helps with memory management during evaluation => tooo slow!
                 num_train_epochs=num_train_epochs,
                 save_total_limit=1,
