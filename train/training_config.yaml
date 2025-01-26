@@ -9,10 +9,10 @@
 # BASE_MODEL: "Qwen2.5-0.5B-SFT"                # 494M
 # Instruct models
 # BASE_MODEL: "Qwen2.5-0.5B-Instruct"           # 494M
-# BASE_MODEL: "Falcon3-1B-Base"                   # 1B
+BASE_MODEL: "Falcon3-1B-Base"                   # 1B
 # BASE_MODEL: "Falcon3-1B-Base-SFT"               # 1B
 # BASE_MODEL: "Falcon3-1B-Instruct"               # 1B
-BASE_MODEL: "Qwen2.5-3B-Instruct"               # 3B
+# BASE_MODEL: "Qwen2.5-3B-Instruct"               # 3B
 # BASE_MODEL: "Falcon3-3B-Instruct"
 
 # Dataset to use
@@ -22,7 +22,7 @@ DATASET_PATH: BounharAbdelaziz/Arabic-Synthetic-Summarization-Dataset-Filtered #
 hyperparameters:
     num_train_epochs: 3                 # as after 2 we saw a small bump in loss (decreasing)
     lr: 0.00002                         # usually 1e-4 is recommended for Qwen models but as we have a small dataset, we prefer to go slowlier
-    batch_size: 1                       # 2 for 0.5B
+    batch_size: 2                       # 2 for 0.5B, 1 for 1B, and 2 for 3B LoRA
     gradient_accumulation_steps: 32     # 16 for 0.5B, 32 for 1B
     # eval_accumulation_steps: 3          # to avoid OOM in eval. Slows down eval as it offloads to CPU.
     max_grad_norm: 1.0
@@ -31,8 +31,8 @@ hyperparameters:
 
     # LoRA
     USE_LORA: True #False True
-    lora_r: 64
-    lora_alpha: 16
+    lora_r: 128
+    lora_alpha: 32
     lora_dropout: 0.05
     target_modules: 
         - "q_proj"
@@ -45,8 +45,8 @@ hyperparameters:
     save_steps: 50
     eval_steps: 50
 
-    optimizer: "adamw_torch_fused" # "adamw_torch" and "adamw_torch_fused" for > 1B models to fit in < 15GB VRAM  
-    MAX_LEN: 1024 # 1024 2048 for 0.5B and 1024 for > 1B model to fit in < 15GB VRAM
+    optimizer: "adamw_torch_fused" # uses less memory. "adamw_torch" and "adamw_torch_fused" for > 1B models to fit in < 15GB VRAM  
+    MAX_LEN: 2048 # 1024 2048 for 0.5B and 1024 for > 1B model to fit in < 15GB VRAM
 
 # To observe how the model is performing when we increase the number of training samples
 MAX_TRAINING_SAMPLES: 5000

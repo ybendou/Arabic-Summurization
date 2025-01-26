@@ -12,9 +12,7 @@ from transformers import (
     # DataCollatorWithPadding,
     DataCollatorForLanguageModeling,
 )
-from trl import SFTTrainer
 from datasets import load_dataset
-from evaluate import load
 import torch
 import yaml
 from pprint import pprint
@@ -26,7 +24,7 @@ from utils import(
     compute_metrics,
     compute_metrics_causal_lm,
     set_seed,
-    apply_lora,
+    print_trainable_params_info,
 )
 
 import warnings
@@ -45,7 +43,6 @@ if __name__ == "__main__":
     print("Training configuration:")
     pprint(config)
     print('-'*50)
-    
     
     MODELS_DICT = config['MODELS_DICT']
     
@@ -77,7 +74,7 @@ if __name__ == "__main__":
     MAX_TRAINING_SAMPLES = config['MAX_TRAINING_SAMPLES']
     
     if FP16_TRAINING:
-        torch_dtype=torch.bfloat16 # bfloat16 has better precission than float16 thanks to bigger mantissa
+        torch_dtype=torch.bfloat16 # bfloat16 has better precission than float16 thanks to bigger mantissa. Though not available with all GPUs architecture.
     else:
         torch_dtype=torch.float32
     
@@ -110,14 +107,24 @@ if __name__ == "__main__":
     if config['hyperparameters']['USE_LORA']:
         # Apply LoRA
         print(f"[INFO] Training with LoRA")
-        model = apply_lora(
-            model,
+        from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+        
+        # Define LoRA configuration
+        lora_config = LoraConfig(
             r=config['hyperparameters']['lora_r'],
             lora_alpha=config['hyperparameters']['lora_alpha'],
             lora_dropout=config['hyperparameters']['lora_dropout'],
-            target_modules=config['hyperparameters']['target_modules'],
-            IS_CAUSAL_LM=IS_CAUSAL_LM,
+            bias="none",
+            task_type="CAUSAL_LM" if IS_CAUSAL_LM else "SEQ_2_SEQ_LM",  # Adjust for your task
+            target_modules=config['hyperparameters']['target_modules'],  # Specify target modules if required
         )
+        
+        # Wrap the model with LoRA
+        model = get_peft_model(model, lora_config)
+
+        # Log trainable parameters for verification
+        print_trainable_params_info(model)
+
         print('-'*50)
     
     # Set a maximum length for tokenization
@@ -132,10 +139,26 @@ if __name__ == "__main__":
     project_name = "arabic-summarization"
     fp16 = '-FP16' if FP16_TRAINING else ''
     sft = '-SFT' if IS_SFT_TRAINING else ''
-    run_name = f'{MODEL_PATH.split("/")[-1]}-bs-{batch_size}-lr-{lr}-ep-{num_train_epochs}-wmp-{warmup_steps}-gacc-{gradient_accumulation_steps}-gnorm-{max_grad_norm}{fp16}{sft}-mxln-{config['hyperparameters']['MAX_LEN']}'
+    # LoRA params
+    lora_training = f'-lora' if config['hyperparameters']['USE_LORA'] else ''
+    lora_r = f'-r-{config['hyperparameters']['lora_r']}' if config['hyperparameters']['USE_LORA'] else ''
+    lora_alpha = f'-a-{config['hyperparameters']['lora_alpha']}' if config['hyperparameters']['USE_LORA'] else ''
+    lora_dropout = f'-d-{config['hyperparameters']['lora_dropout']}' if config['hyperparameters']['USE_LORA'] else ''
     
+    run_name = f'{MODEL_PATH.split("/")[-1]}-bs-{batch_size}-lr-{lr}-ep-{num_train_epochs}-wp-{warmup_steps}-gacc-{gradient_accumulation_steps}-gnm-{max_grad_norm}{fp16}{sft}-mx-{config['hyperparameters']['MAX_LEN']}{lora_training}{lora_r}{lora_alpha}'
+    assert '--' not in run_name, f"[WARN] Detected -- in run_name. This will cause a push_to_hub error! Found run_name={run_name} "
+    assert len(run_name) < 96, f"[WARN] run_name too long. This will cause a push_to_hub error! Consider squeezing it. Found run_name={run_name}"
+
     # Where to save the model
     MODEL_RUN_SAVE_PATH = f"BounharAbdelaziz/Arabic-Summarization/{run_name}"
+    
+    # Save the configuration to a .txt file
+    output_filename = f"./run_configs/{run_name}.txt"
+    with open(output_filename, 'w') as output_file:
+        for key, value in config.items():
+            output_file.write(f"{key}: {value}\n")
+
+    print(f"Configuration saved to {output_filename}")
     
     # Initialize wandb
     wandb.init(
@@ -185,7 +208,8 @@ if __name__ == "__main__":
                 metric_for_best_model=config['METRIC_FOR_BEST_MODEL'],
                 gradient_checkpointing=True,
                 load_best_model_at_end=True,
-                optim=config['hyperparameters']['optimizer']
+                optim=config['hyperparameters']['optimizer'],
+                gradient_checkpointing_kwargs={"use_reentrant": False} if config['hyperparameters']['USE_LORA'] else None,  # Avoids gradient issues in backprop when LoRA is set to True. # https://discuss.huggingface.co/t/how-to-combine-lora-and-gradient-checkpointing-in-whisper/50629
             )
             
             # Initialize Trainer
@@ -225,6 +249,8 @@ if __name__ == "__main__":
                 metric_for_best_model=config['METRIC_FOR_BEST_MODEL'],
                 gradient_checkpointing=True,
                 load_best_model_at_end=True,
+                optim=config['hyperparameters']['optimizer'],
+                gradient_checkpointing_kwargs={"use_reentrant": False} if config['hyperparameters']['USE_LORA'] else None,  # Avoids gradient issues in backprop when LoRA is set to True. # https://discuss.huggingface.co/t/how-to-combine-lora-and-gradient-checkpointing-in-whisper/50629
             )
         
             # Initialize Trainer

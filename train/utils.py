@@ -14,15 +14,29 @@ from evaluate import load
 rouge = load('rouge')
 bleu = load('bleu')
 
-
 def preprocess_logits_for_metrics(logits, labels):
     """
     Original Trainer may have a memory leak. 
     This is a workaround to avoid storing too many tensors that are not needed. 
     Taken from https://discuss.huggingface.co/t/cuda-out-of-memory-when-using-trainer-with-compute-metrics/2941/22
     """
+    
+    # Handle tuple logits (happens when the model is trained using LoRA)
+    if isinstance(logits, tuple):
+        logits = logits[1]          # logits[0] is the loss value and logits[1] are the logits used to compute loss
+                                    # logits: (tensor(2.0426, device='cuda:0'), tensor([[[ 7.8750,  5.3750,  7.0938,  ..., -4.2500, -4.2500, -4.2500],
+                                    #          [ 5.0938,  5.0625,  7.3750,  ..., -1.5312, -1.5312, -1.5312],
+                                    #          [ 2.6562, -0.9609,  0.0728,  ..., -2.0312, -2.0312, -2.0312],
+                                    #          ...,
+                                    #          [ 4.1562,  1.4375, -3.6250,  ..., -2.1250, -2.1250, -2.1250],
+                                    #          [ 3.7344, -1.6641, -3.8125,  ..., -1.9688, -1.9688, -1.9688],
+                                    #          [ 8.1875, -1.2344, -1.6094,  ..., -3.0938, -3.0938, -3.0938]]],
+                                    #        device='cuda:0'))
+
+    # Proceed with argmax
     pred_ids = torch.argmax(logits, dim=-1)
-    return pred_ids, labels
+
+    return pred_ids
 
 @torch.no_grad()
 def compute_metrics_causal_lm(eval_pred, tokenizer):
@@ -30,7 +44,8 @@ def compute_metrics_causal_lm(eval_pred, tokenizer):
     
     # If preds is a tuple of logits, extract token IDs
     if isinstance(preds, tuple):
-        preds = preds[0]  # Assuming the first element is logits
+        preds = preds[0]  # the second element is logits
+        
     if len(preds.shape) == 3:  # If preds is (batch_size, seq_length, vocab_size)
         preds = np.argmax(preds, axis=-1)  # Convert logits to token IDs
     
@@ -211,39 +226,3 @@ def print_trainable_params_info(model):
     print(f"Total Parameters: {total_params:,}")
     print(f"Trainable Parameters: {trainable_params:,}")
     print(f"Reduction in Trainable Parameters: {reduction_percent:.2f}%")
-    
-# Add LoRA configuration
-def apply_lora(model, r=8, lora_alpha=32, lora_dropout=0.1, target_modules=None, IS_CAUSAL_LM=True):
-    """
-    Applies LoRA (Low-Rank Adaptation) to the model for parameter-efficient fine-tuning.
-    
-    Parameters:
-    - model: The base model to be adapted with LoRA.
-    - r: LoRA rank.
-    - lora_alpha: Scaling factor for LoRA layers.
-    - lora_dropout: Dropout probability for LoRA layers.
-    - target_modules: List of modules to apply LoRA (e.g., `["q_proj", "v_proj"]`).
-    
-    Returns:
-    - The model wrapped with LoRA.
-    """
-    
-    # Define LoRA configuration
-    lora_config = LoraConfig(
-        r=r,
-        lora_alpha=lora_alpha,
-        lora_dropout=lora_dropout,
-        bias="none",
-        # task_type="CAUSAL_LM" if IS_CAUSAL_LM else "SEQ_2_SEQ_LM",  # Adjust for your task
-        target_modules=target_modules,  # Specify target modules if required
-    )
-    
-    # Wrap the model with LoRA
-    model = get_peft_model(model, lora_config)
-
-    # Log trainable parameters for verification
-    print_trainable_params_info(model)
-    return model
-
-
-
