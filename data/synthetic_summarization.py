@@ -89,7 +89,7 @@ if __name__ == "__main__":
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # get configuration
-    with open('config.yaml') as file:
+    with open('data_collection_config.yaml') as file:
         config = yaml.safe_load(file)
         
     # Pretty-print the entire configuration
