@@ -25,7 +25,7 @@ import yaml
 from pprint import pprint
 from utils import(
     preprocess_logits_for_metrics,
-    compute_metrics,
+    compute_metrics_seq2seq,
     compute_metrics_causal_lm,
     set_seed,
     print_trainable_params_info,
@@ -115,7 +115,7 @@ if __name__ == "__main__":
             torch_dtype=torch_dtype, 
         )
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-    tokenizer.padding_side = 'right' # left
+    tokenizer.padding_side = 'left' if IS_CAUSAL_LM else 'right'
     
     if config['hyperparameters']['USE_LORA']:
         # Apply LoRA
@@ -316,7 +316,7 @@ if __name__ == "__main__":
             eval_dataset=eval_dataset,
             tokenizer=tokenizer,
             data_collator=DataCollatorForSeq2Seq(tokenizer, model=model),
-            compute_metrics=lambda x : compute_metrics(x, tokenizer),
+            compute_metrics=lambda x : compute_metrics_seq2seq(x, tokenizer),
         )
         
     # Train the model
