@@ -158,7 +158,7 @@ def compute_metrics_causal_lm(eval_pred, tokenizer):
 
 
 @torch.no_grad()
-def compute_metrics(eval_pred, tokenizer):
+def compute_metrics_seq2seq(eval_pred, tokenizer):
     preds, labels = eval_pred
     
     # Clip token IDs to valid range
@@ -186,66 +186,6 @@ def compute_metrics(eval_pred, tokenizer):
         "rougeLsum": rouge_results["rougeLsum"] * 100,
         "bleu": bleu_results["bleu"] * 100,
     }
-    
-@torch.no_grad()
-def compute_metrics_old(eval_pred, tokenizer):
-    preds, labels = eval_pred
-    
-    # Clip token IDs to the valid range
-    vocab_size = tokenizer.vocab_size
-    def clip_token_ids(token_ids):
-        """Clip token IDs to the valid range [0, vocab_size - 1]."""
-        return [min(max(token_id, 0), vocab_size - 1) for token_id in token_ids]
-
-    # Decode predictions and references
-    preds = [
-        tokenizer.decode(clip_token_ids(pred), skip_special_tokens=True)
-        for pred in preds
-    ]
-    labels = [
-        tokenizer.decode(clip_token_ids(ref), skip_special_tokens=True)
-        for ref in labels
-    ]
-    
-    # # Clip token IDs to valid range
-    # preds = np.clip(preds, 0, tokenizer.vocab_size - 1)
-    # labels = np.clip(labels, 0, tokenizer.vocab_size - 1)
-    
-    # Ensure labels are not masked
-    labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
-    
-    # Decode predictions and labels
-    text_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
-    text_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
-    
-    print(f'text_preds[0]: {text_preds[0]}')
-    print(f'text_labels[0]: {text_labels[0]}')
-    
-    # Compute metrics
-    rouge_results = rouge.compute(predictions=text_preds, references=text_labels, use_stemmer=True)
-    bleu_results = bleu.compute(predictions=text_preds, references=text_labels)
-    # meteor_results = meteor.compute(
-    #     predictions=text_preds, 
-    #     references=text_labels
-    # )
-    # bertscore_results = bertscore.compute(
-    #     predictions=text_preds, 
-    #     references=text_labels, 
-    #     lang='ar'
-    # )
-    
-    return {
-        "rouge1": rouge_results["rouge1"] * 100,
-        "rouge2": rouge_results["rouge2"] * 100,
-        "rougeL": rouge_results["rougeL"] * 100,
-        "rougeLsum": rouge_results["rougeLsum"] * 100,
-        "bleu": bleu_results["bleu"] * 100,
-        # "meteor": meteor_results["meteor"] * 100,
-        # "bertscore_precision": sum(bertscore_results['precision']) / len(bertscore_results['precision']) * 100,
-        # "bertscore_recall": sum(bertscore_results['recall']) / len(bertscore_results['recall']) * 100,
-        # "bertscore_f1": sum(bertscore_results['f1']) / len(bertscore_results['f1']) * 100
-    }
-   
 
 def set_seed(seed):
     """ Sets the seed for reproducibility """
