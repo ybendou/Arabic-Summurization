@@ -1,0 +1,23 @@
+BASE_MODEL: Falcon3-1B-Base-SFT
+DATASET_PATH: BounharAbdelaziz/Arabic-Synthetic-Summarization-Dataset-Filtered
+hyperparameters: {'num_train_epochs': 3, 'lr': 1e-05, 'batch_size': 1, 'gradient_accumulation_steps': 8, 'max_grad_norm': 1.0, 'warmup_steps': 500, 'warmup_ratio': 0.1, 'USE_LORA': False, 'lora_r': 128, 'lora_alpha': 32, 'lora_dropout': 0.05, 'target_modules': ['q_proj', 'k_proj', 'v_proj', 'o_proj'], 'logging_steps': 10, 'save_steps': 50, 'eval_steps': 50, 'optimizer': 'adamw_torch_fused', 'MAX_LEN': 1024}
+MAX_TRAINING_SAMPLES: 5000
+SEED: 42
+METRIC_FOR_BEST_MODEL: rougeLsum
+FP16_TRAINING: True
+DEFAULT_CHAT_TEMPLATE: {% for message in messages %}
+{% if message['role'] == 'user' %}
+{{ '<|user|>
+' + message['content'] + eos_token }}
+{% elif message['role'] == 'system' %}
+{{ '<|system|>
+' + message['content'] + eos_token }}
+{% elif message['role'] == 'assistant' %}
+{{ '<|assistant|>
+'  + message['content'] + eos_token }}
+{% endif %}
+{% if loop.last and add_generation_prompt %}
+{{ '<|assistant|>' }}
+{% endif %}
+{% endfor %}
+MODELS_DICT: {'bert-base-arabic': {'MODEL_PATH': 'asafaya/bert-base-arabic', 'CAUSAL_LM': False, 'SFT_TRAINING': False}, 'gpt2': {'MODEL_PATH': 'openai-community/gpt2', 'CAUSAL_LM': True, 'SFT_TRAINING': False}, 'mt5-small': {'MODEL_PATH': 'google/mt5-small', 'CAUSAL_LM': False, 'SFT_TRAINING': False}, 'mt5-small-SFT': {'MODEL_PATH': 'google/mt5-small', 'CAUSAL_LM': False, 'SFT_TRAINING': True}, 'mt5-base': {'MODEL_PATH': 'google/mt5-base', 'CAUSAL_LM': False, 'SFT_TRAINING': False}, 'mt5-base-SFT': {'MODEL_PATH': 'google/mt5-base', 'CAUSAL_LM': False, 'SFT_TRAINING': True}, 'Qwen2.5-0.5B': {'MODEL_PATH': 'Qwen/Qwen2.5-0.5B', 'CAUSAL_LM': True, 'SFT_TRAINING': False}, 'Qwen2.5-0.5B-SFT': {'MODEL_PATH': 'Qwen/Qwen2.5-0.5B', 'CAUSAL_LM': True, 'SFT_TRAINING': True}, 'Qwen2.5-0.5B-Instruct': {'MODEL_PATH': 'Qwen/Qwen2.5-0.5B-Instruct', 'CAUSAL_LM': True, 'SFT_TRAINING': True}, 'Falcon3-1B-Base': {'MODEL_PATH': 'tiiuae/Falcon3-1B-Base', 'CAUSAL_LM': True, 'SFT_TRAINING': False}, 'Falcon3-1B-Base-SFT': {'MODEL_PATH': 'tiiuae/Falcon3-1B-Base', 'CAUSAL_LM': True, 'SFT_TRAINING': True}, 'Falcon3-1B-Instruct': {'MODEL_PATH': 'tiiuae/Falcon3-1B-Instruct', 'CAUSAL_LM': True, 'SFT_TRAINING': True}, 'Qwen2.5-3B-Instruct': {'MODEL_PATH': 'Qwen/Qwen2.5-3B-Instruct', 'CAUSAL_LM': True, 'SFT_TRAINING': True}, 'Falcon3-3B-Instruct': {'MODEL_PATH': 'tiiuae/Falcon3-3B-Instruct', 'CAUSAL_LM': True, 'SFT_TRAINING': True}, 'MINE': {'MODEL_PATH': 'BounharAbdelaziz/Falcon3-1B-Instruct-bs-1-lr-2e-05-ep-3-wmp-100-gacc-32-gnorm-1.0-FP16-SFT-mxln-1024', 'CAUSAL_LM': True, 'SFT_TRAINING': True}}
