@@ -168,12 +168,61 @@ def compute_metrics(eval_pred, tokenizer):
     # Ensure labels are not masked
     labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
     
+    # Decode predictions and labels directly using batch_decode
+    text_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
+    text_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+    
+    print(f'text_preds[0]: {text_preds[0]}')
+    print(f'text_labels[0]: {text_labels[0]}')
+    
+    # Compute metrics
+    rouge_results = rouge.compute(predictions=text_preds, references=text_labels, use_stemmer=True)
+    bleu_results = bleu.compute(predictions=text_preds, references=text_labels)
+    
+    return {
+        "rouge1": rouge_results["rouge1"] * 100,
+        "rouge2": rouge_results["rouge2"] * 100,
+        "rougeL": rouge_results["rougeL"] * 100,
+        "rougeLsum": rouge_results["rougeLsum"] * 100,
+        "bleu": bleu_results["bleu"] * 100,
+    }
+    
+@torch.no_grad()
+def compute_metrics_old(eval_pred, tokenizer):
+    preds, labels = eval_pred
+    
+    # Clip token IDs to the valid range
+    vocab_size = tokenizer.vocab_size
+    def clip_token_ids(token_ids):
+        """Clip token IDs to the valid range [0, vocab_size - 1]."""
+        return [min(max(token_id, 0), vocab_size - 1) for token_id in token_ids]
+
+    # Decode predictions and references
+    preds = [
+        tokenizer.decode(clip_token_ids(pred), skip_special_tokens=True)
+        for pred in preds
+    ]
+    labels = [
+        tokenizer.decode(clip_token_ids(ref), skip_special_tokens=True)
+        for ref in labels
+    ]
+    
+    # # Clip token IDs to valid range
+    # preds = np.clip(preds, 0, tokenizer.vocab_size - 1)
+    # labels = np.clip(labels, 0, tokenizer.vocab_size - 1)
+    
+    # Ensure labels are not masked
+    labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
+    
     # Decode predictions and labels
     text_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
     text_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
     
+    print(f'text_preds[0]: {text_preds[0]}')
+    print(f'text_labels[0]: {text_labels[0]}')
+    
     # Compute metrics
-    rouge_results = rouge.compute(predictions=text_preds, references=text_labels)
+    rouge_results = rouge.compute(predictions=text_preds, references=text_labels, use_stemmer=True)
     bleu_results = bleu.compute(predictions=text_preds, references=text_labels)
     # meteor_results = meteor.compute(
     #     predictions=text_preds, 
@@ -197,91 +246,6 @@ def compute_metrics(eval_pred, tokenizer):
         # "bertscore_f1": sum(bertscore_results['f1']) / len(bertscore_results['f1']) * 100
     }
    
-# def preprocess_function_causal_lm_sft_training(examples, tokenizer, input_column_name="text", target_column_name="summary"):
-#     # Format data in instruction-following style
-#     formatted_inputs = [
-#         f"### System: You are a summarization tool designed exclusively to generate concise summaries of Arabic input text.\n### Human: Summarize the following text in Arabic:\n{source_text}\n### Assistant: {summary}" 
-#         for source_text, summary in zip(examples[input_column_name], examples[target_column_name])
-#     ]
-    
-#     # Tokenize inputs with truncation and padding
-#     model_inputs = tokenizer(
-#         formatted_inputs, 
-#         truncation=True, 
-#         padding='max_length',  # Use max_length padding
-#         max_length=tokenizer.model_max_length,  # Ensure consistent max length
-#         return_tensors='pt'  # Return PyTorch tensors
-#     )
-    
-#     # Set labels to be the same as input_ids for SFT
-#     model_inputs["labels"] = model_inputs["input_ids"].clone()
-    
-#     # Replace padding tokens with -100 in labels
-#     model_inputs["labels"] = torch.where(
-#         model_inputs["labels"] == tokenizer.pad_token_id, 
-#         torch.tensor(-100), 
-#         model_inputs["labels"]
-#     )
-    
-#     return model_inputs
-
-# def preprocess_function_causal_lm_sft_training(examples, tokenizer):
-#     inputs = []
-#     targets = []
-    
-#     for text, summary in zip(examples['text'], examples['summary']):
-#         # Create structured prompt
-#         full_prompt = f"### System: You are a summarization tool designed exclusively to generate concise summaries of Arabic input text.\n### Human: {text}\n### Assistant: "
-#         target = f"{summary}{tokenizer.eos_token}"
-#         inputs.append(full_prompt)
-#         targets.append(target)  # Add EOS
-    
-#     # Tokenize inputs and targets separately
-#     tokenized_inputs = tokenizer(
-#         inputs, 
-#         max_length=tokenizer.model_max_length,
-#         truncation=True, 
-#         padding='max_length',
-#         return_tensors="pt"
-#     )
-    
-#     # Tokenize labels with padding and truncation
-#     with tokenizer.as_target_tokenizer():
-#         tokenized_targets = tokenizer(
-#             targets,
-#             max_length=tokenizer.model_max_length,
-#             truncation=True,
-#             padding='max_length', 
-#             return_tensors="pt"
-#         )
-    
-#     # Create combined sequence
-#     input_ids = tokenized_inputs.input_ids.clone()
-#     labels = tokenized_targets.input_ids.clone()
-    
-    
-#     # Mask everything except the assistant response
-#     for i in range(len(input_ids)):
-#         # Calculate prompt length
-#         prompt_length = len(tokenizer.encode(inputs[i])) - 1  # Exclude EOS
-        
-#         # Mask input prompt in labels
-#         labels[i, :prompt_length] = -100
-        
-#         # Mask padding
-#         labels[i][labels[i] == tokenizer.pad_token_id] = -100
-        
-#     inputs = tokenizer.batch_decode(tokenized_inputs.input_ids, skip_special_tokens=True)
-#     text_labels = tokenizer.batch_decode(tokenized_targets.input_ids, skip_special_tokens=True)
-#     print(f'inputs: {inputs}')
-#     print(f'target: {text_labels}')
-#     print(f'-'*50)
-    
-#     return {
-#         "input_ids": input_ids,
-#         "attention_mask": tokenized_inputs.attention_mask,
-#         "labels": labels
-#     }
 
 def set_seed(seed):
     """ Sets the seed for reproducibility """
