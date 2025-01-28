@@ -1,0 +1,44 @@
+# # List of models to evaluate
+# EVALUATE_MODELS:
+#     # - "BounharAbdelaziz/Falcon3-1B-Base-bs-2-lr-2e-05-ep-3-wp-100-gacc-32-gnm-1.0-FP16-mx-2048-lora-r-128-a-32"
+#     # - "BounharAbdelaziz/Falcon3-1B-Base-bs-2-lr-2e-05-ep-3-wp-100-gacc-32-gnm-1.0-FP16-SFT-mx-2048-lora-r-128-a-32"
+#     # - "BounharAbdelaziz/Falcon3-1B-Instruct-bs-2-lr-2e-05-ep-3-wp-100-gacc-32-gnm-1.0-FP16-SFT-mx-2048-lora-r-128-a-32"
+#     # - "BounharAbdelaziz/Qwen2.5-3B-Instruct-bs-2-lr-2e-05-ep-3-wp-100-gacc-32-gnm-1.0-FP16-SFT-mx-1024-lora-r-64-a-32"
+#     # - "BounharAbdelaziz/Falcon3-3B-Instruct-bs-2-lr-2e-05-ep-3-wp-100-gacc-32-gnm-1.0-FP16-SFT-mx-1024-lora-r-128-a-32"
+#     # - "BounharAbdelaziz/Falcon3-3B-Instruct-bs-2-lr-2e-05-ep-3-wp-100-gacc-32-gnm-1.0-FP16-SFT-mx-1024-lora-r-64-a-32"
+#     # - "BounharAbdelaziz/mt5-base-bs-2-lr-2e-05-ep-3-wmp-100-gacc-16-gnorm-1.0-FP16-SFT-mxln-2048"
+#     # - "BounharAbdelaziz/Falcon3-1B-Base-bs-1-lr-2e-05-ep-3-wmp-100-gacc-32-gnorm-1.0-FP16-SFT-mxln-1024"
+#     v0:
+#         model_path: "BounharAbdelaziz/Falcon3-1B-Instruct-bs-1-lr-2e-05-ep-3-wmp-100-gacc-32-gnorm-1.0-FP16-SFT-mxln-1024"
+#         tokenizer_path: tiiuae/Falcon3-1B-Instruct
+#         MAX_LEN: 1024
+#         IS_SFT: True
+#     # - "BounharAbdelaziz/Qwen2.5-0.5B-bs-2-lr-2e-05-ep-3-wmp-100-gacc-16-gnorm-1.0-FP16-mxln-2048"
+#     # - "BounharAbdelaziz/Qwen2.5-0.5B-Instruct-bs-2-lr-2e-05-ep-3-wmp-100-gacc-16-gnorm-1.0-FP16-SFT-mxln-2048"
+#     # - "BounharAbdelaziz/Qwen2.5-0.5B-bs-2-lr-2e-05-ep-3-wmp-100-gacc-16-gnorm-1.0-FP16-SFT-mxln-2048"
+#     # - "BounharAbdelaziz/Qwen2.5-0.5B-bs-2-lr-2e-05-ep-2-wmp-100-gacc-16-gnorm-1.0-FP16-SFT-mxln-2048"
+#     # - "BounharAbdelaziz/Qwen2.5-0.5B-Instruct-bs-2-lr-2e-05-ep-2-wmp-100-gacc-16-gnorm-1.0-FP16-SFT-mxln-2048"
+#     # - "BounharAbdelaziz/mt5-base-bs-8-lr-2e-05-ep-6-wmp-100-gacc-8-gnorm-1.0-FP16-SFT"
+#     # - "BounharAbdelaziz/mt5-small-bs-8-lr-2e-05-ep-6-wmp-100-gacc-8-gnorm-1.0-FP16-SFT"
+#     # # - "BounharAbdelaziz/mt5-small-bs-4-lr-0.00056-ep-6-wmp-100-gacc-4-gnorm-1.0"
+EVALUATE_MODELS: 
+    # - "BounharAbdelaziz/Falcon3-1B-Instruct-bs-1-lr-2e-05-ep-3-wmp-100-gacc-32-gnorm-1.0-FP16-SFT-mxln-1024"
+    # - "BounharAbdelaziz/Falcon3-1B-Base-bs-2-lr-2e-05-ep-4-wp-100-gacc-32-gnm-1.0-FP16-SFT-mx-1024-v2"
+    - "BounharAbdelaziz/Qwen2.5-0.5B-Instruct-bs-2-lr-1e-05-ep-1-wp-100-gacc-32-gnm-1.0-FP16-SFT-mx-2048-v2"
+    # - "BounharAbdelaziz/Falcon3-1B-Base-bs-2-lr-2e-05-ep-4-wp-100-gacc-32-gnm-1.0-FP16-SFT-mx-1024-v2"
+batch_size: 32
+MAX_LEN: 2048
+
+MODEL_PATH: "BounharAbdelaziz/Falcon3-1B-Base-bs-2-lr-2e-05-ep-4-wp-100-gacc-32-gnm-1.0-FP16-SFT-mx-1024-v2" # "Qwen/Qwen2.5-0.5B-Instruct" #"tiiuae/Falcon3-1B-Instruct"
+# Dataset to use
+DATASET_PATH: BounharAbdelaziz/Arabic-Synthetic-Summarization-Dataset-Filtered #"BounharAbdelaziz/Arabic-Synthetic-Summarization-Dataset"
+
+# Columns of text and reference summary
+TEXT_COLUMN: "text"
+REFERENCE_COLUMN: "summary"
+
+# where to save the metrics
+OUTPUT_PATH: "metrics.csv"
+
+# Seed for reproducibility
+SEED: 42
