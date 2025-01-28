@@ -270,6 +270,22 @@ if __name__ == "__main__":
         train_dataset = dataset["train"]
         eval_dataset = dataset["validation"]
         test_dataset = dataset["test"]
+        
+        def preprocess_function(examples):
+            # Tokenize the inputs (text) and targets (summary)
+            model_inputs = tokenizer(examples["text"], max_length=config['hyperparameters']['MAX_LEN'], truncation=True)
+
+            # Tokenize the targets with the `text_target` argument
+            with tokenizer.as_target_tokenizer():
+                labels = tokenizer(examples["summary"], max_length=config['hyperparameters']['MAX_LEN'], truncation=True)
+
+            model_inputs["labels"] = labels["input_ids"]
+            return model_inputs
+
+        # Apply the preprocessing function to the datasets
+        train_dataset = train_dataset.map(preprocess_function, batched=True)
+        eval_dataset = eval_dataset.map(preprocess_function, batched=True)
+        test_dataset = test_dataset.map(preprocess_function, batched=True)
 
         # Training arguments
         training_args = Seq2SeqTrainingArguments(
