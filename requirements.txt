@@ -3,3 +3,4 @@ pyyaml==6.0.1           # for loading yaml files
 autoawq==0.2.8          # for AWQ models
 rouge_score==0.1.2      # for computing ROUGE scores
 torch==2.5.1+cu124      # for training models
+rouge==1.0.1            # for rouge score

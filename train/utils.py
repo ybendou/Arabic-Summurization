@@ -3,7 +3,8 @@ import numpy as np
 from evaluate import load
 from nltk.tokenize import RegexpTokenizer
 import torch
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+import csv
+import re
 # from torchmetrics.text.rouge import ROUGEScore
 # from torchmetrics.text.bleu import BLEUScore
 
@@ -13,6 +14,40 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from evaluate import load
 rouge = load('rouge')
 bleu = load('bleu')
+meteor = load('meteor')
+bertscore = load('bertscore')
+
+def create_conversation(example):
+    """
+    Transform the dataset into a conversational format.
+    The user provides the text, and the assistant provides the summary.
+    """
+    # Create a conversation with user and assistant roles
+    messages = [
+        {"role": "user", "content": example["text"]},  # User provides the text
+        {"role": "assistant", "content": example["summary"]}  # Assistant provides the summary
+    ]
+    # Return the conversation as a dictionary
+    return {"messages": messages}
+
+def create_testing_conversation(example):
+    """
+    Transform the dataset into a conversational format.
+    The user provides the text, and the assistant must output summary.
+    """
+    # Create a conversation with user and assistant roles
+    messages = [
+        {"role": "user", "content": example["text"]},  # User provides the text
+        {"role": "assistant", "content": ""}  # Assistant must output the summary
+    ]
+    # Return the conversation as a dictionary
+    return {"messages": messages}
+
+
+def apply_chat_template(example, tokenizer):
+    """ Apply the chat template to the dataset. """
+    example["text"] = tokenizer.apply_chat_template(example["messages"], tokenize=False)
+    return example
 
 def preprocess_logits_for_metrics(logits, labels):
     """
@@ -40,42 +75,88 @@ def preprocess_logits_for_metrics(logits, labels):
 
 @torch.no_grad()
 def compute_metrics_causal_lm(eval_pred, tokenizer):
-    preds, labels = eval_pred
+    """Compute ROUGE and BLEU scores for evaluation."""
+    predictions, references = eval_pred
+
+    # Clip token IDs to the valid range
+    vocab_size = tokenizer.vocab_size
+
+    def clip_token_ids(token_ids):
+        """Clip token IDs to the valid range [0, vocab_size - 1]."""
+        return [min(max(token_id, 0), vocab_size - 1) for token_id in token_ids]
+
+    # Decode predictions and references
+    decoded_preds = [
+        tokenizer.decode(clip_token_ids(pred), skip_special_tokens=True)
+        for pred in predictions
+    ]
+    decoded_refs = [
+        tokenizer.decode(clip_token_ids(ref), skip_special_tokens=True)
+        for ref in references
+    ]
     
-    # If preds is a tuple of logits, extract token IDs
-    if isinstance(preds, tuple):
-        preds = preds[0]  # the second element is logits
-        
-    if len(preds.shape) == 3:  # If preds is (batch_size, seq_length, vocab_size)
-        preds = np.argmax(preds, axis=-1)  # Convert logits to token IDs
+    # Clean summaries
+    def clean_summary(text):
+        special_tokens = ["<|im_end|>", "<|assistant|>", "<|user|>", "<|system|>"]
+        for token in special_tokens:
+            text = text.replace(token, "")
+        return re.sub(r"\s+", " ", text).strip()
     
-    # Ensure labels are not masked
-    labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
+    pred_summaries = []
+    for pred in decoded_preds:
+        if "<|assistant|>" in pred:
+            summary = pred.split("<|assistant|>")[-1].strip()
+            summary = clean_summary(summary)
+            pred_summaries.append(summary)
+        else:
+            summary = pred.strip()
+            summary = clean_summary(summary)
+            pred_summaries.append(summary)
+            
+    # apply the same to the references
+    ref_summaries = []
+    for ref in decoded_refs:
+        if "<|assistant|>" in ref:
+            summary = ref.split("<|assistant|>")[-1].strip()
+            summary = clean_summary(summary)
+            ref_summaries.append(summary)
+        else:
+            summary = ref.strip()
+            summary = clean_summary(summary)
+            ref_summaries.append(summary)
+            
+    # print(f'0 - ref_summaries[0]: {ref_summaries[0]}')
     
-    # Decode predictions and labels
-    text_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
-    text_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+    # Convert to token IDs
+    pred_token_ids = [tokenizer.encode(p, add_special_tokens=False) for p in pred_summaries]
+    ref_token_ids = [tokenizer.encode(r, add_special_tokens=False) for r in ref_summaries]
+
+    # Use the exact same metric function from training
+    eval_pred = (pred_token_ids, ref_token_ids)
     
-    # Post-process text for ROUGE and BLEU
-    text_preds = [(p if p.endswith(("!", "؟", "۔")) else p + "۔") for p in text_preds]
-    text_labels = [(l if l.endswith(("!", "؟", "۔")) else l + "۔") for l in text_labels]
+    predictions, references = eval_pred
+
+    # Clip token IDs to the valid range
+    vocab_size = tokenizer.vocab_size
+
+    # Decode predictions and references in batches
+    decoded_preds = tokenizer.batch_decode([clip_token_ids(pred) for pred in predictions], skip_special_tokens=True)
+    decoded_refs = tokenizer.batch_decode([clip_token_ids(ref) for ref in references], skip_special_tokens=True)
     
-    sent_tokenizer = RegexpTokenizer(u'[^!؟۔]*[!؟۔]')
-    text_preds = ["\n".join(np.char.strip(sent_tokenizer.tokenize(p))) for p in text_preds]
-    text_labels = ["\n".join(np.char.strip(sent_tokenizer.tokenize(l))) for l in text_labels]
-    
-    # Compute metrics
-    rouge_results = rouge.compute(predictions=text_preds, references=text_labels)
-    bleu_results = bleu.compute(predictions=text_preds, references=text_labels)
-    
-    return {
-        "rouge1": rouge_results["rouge1"] * 100,
-        "rouge2": rouge_results["rouge2"] * 100,
-        "rougeL": rouge_results["rougeL"] * 100,
-        "rougeLsum": rouge_results["rougeLsum"] * 100,
-        "bleu": bleu_results["bleu"] * 100,
-    }
-    
+    # Print decoded examples to inspect issues
+    print(f'decoded_preds[0]: {decoded_preds[0]}')
+    print(f'decoded_refs[0]: {decoded_refs[0]}')
+
+    # Compute ROUGE and BLEU scores
+    rouge_results = rouge.compute(predictions=decoded_preds, references=decoded_refs, use_stemmer=True)
+    bleu_results = bleu.compute(predictions=decoded_preds, references=decoded_refs)
+
+    metrics = {key: rouge_results[key] * 100 for key in ["rouge1", "rouge2", "rougeL", "rougeLsum"]}
+    metrics["bleu"] = bleu_results["bleu"] * 100
+
+    return metrics
+
+
 @torch.no_grad()
 def compute_metrics(eval_pred, tokenizer):
     preds, labels = eval_pred
@@ -91,17 +172,18 @@ def compute_metrics(eval_pred, tokenizer):
     text_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
     text_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
     
-    # Post-process text for ROUGE and BLEU
-    text_preds = [(p if p.endswith(("!", "؟", "۔")) else p + "۔") for p in text_preds]
-    text_labels = [(l if l.endswith(("!", "؟", "۔")) else l + "۔") for l in text_labels]
-
-    sent_tokenizer = RegexpTokenizer(u'[^!؟۔]*[!؟۔]')
-    text_preds = ["\n".join([s.strip() for s in sent_tokenizer.tokenize(p)]) for p in text_preds]
-    text_labels = ["\n".join([s.strip() for s in sent_tokenizer.tokenize(l)]) for l in text_labels]
-
     # Compute metrics
     rouge_results = rouge.compute(predictions=text_preds, references=text_labels)
     bleu_results = bleu.compute(predictions=text_preds, references=text_labels)
+    # meteor_results = meteor.compute(
+    #     predictions=text_preds, 
+    #     references=text_labels
+    # )
+    # bertscore_results = bertscore.compute(
+    #     predictions=text_preds, 
+    #     references=text_labels, 
+    #     lang='ar'
+    # )
     
     return {
         "rouge1": rouge_results["rouge1"] * 100,
@@ -109,99 +191,97 @@ def compute_metrics(eval_pred, tokenizer):
         "rougeL": rouge_results["rougeL"] * 100,
         "rougeLsum": rouge_results["rougeLsum"] * 100,
         "bleu": bleu_results["bleu"] * 100,
+        # "meteor": meteor_results["meteor"] * 100,
+        # "bertscore_precision": sum(bertscore_results['precision']) / len(bertscore_results['precision']) * 100,
+        # "bertscore_recall": sum(bertscore_results['recall']) / len(bertscore_results['recall']) * 100,
+        # "bertscore_f1": sum(bertscore_results['f1']) / len(bertscore_results['f1']) * 100
     }
    
-def preprocess_function_causal_lm_sft_training(examples, tokenizer, input_column_name="text", target_column_name="summary"):
-    # Format data in instruction-following style
-    formatted_inputs = [
-        f"### System: You are a summarization tool designed exclusively to generate concise summaries of Arabic input text.\n### Human: Summarize the following text in Arabic:\n{source_text}\n### Assistant: {summary}" 
-        for source_text, summary in zip(examples[input_column_name], examples[target_column_name])
-    ]
+# def preprocess_function_causal_lm_sft_training(examples, tokenizer, input_column_name="text", target_column_name="summary"):
+#     # Format data in instruction-following style
+#     formatted_inputs = [
+#         f"### System: You are a summarization tool designed exclusively to generate concise summaries of Arabic input text.\n### Human: Summarize the following text in Arabic:\n{source_text}\n### Assistant: {summary}" 
+#         for source_text, summary in zip(examples[input_column_name], examples[target_column_name])
+#     ]
     
-    # Tokenize inputs with truncation and padding
-    model_inputs = tokenizer(
-        formatted_inputs, 
-        truncation=True, 
-        padding='max_length',  # Use max_length padding
-        max_length=tokenizer.model_max_length,  # Ensure consistent max length
-        return_tensors='pt'  # Return PyTorch tensors
-    )
+#     # Tokenize inputs with truncation and padding
+#     model_inputs = tokenizer(
+#         formatted_inputs, 
+#         truncation=True, 
+#         padding='max_length',  # Use max_length padding
+#         max_length=tokenizer.model_max_length,  # Ensure consistent max length
+#         return_tensors='pt'  # Return PyTorch tensors
+#     )
     
-    # Set labels to be the same as input_ids for SFT
-    model_inputs["labels"] = model_inputs["input_ids"].clone()
+#     # Set labels to be the same as input_ids for SFT
+#     model_inputs["labels"] = model_inputs["input_ids"].clone()
     
-    # Replace padding tokens with -100 in labels
-    model_inputs["labels"] = torch.where(
-        model_inputs["labels"] == tokenizer.pad_token_id, 
-        torch.tensor(-100), 
-        model_inputs["labels"]
-    )
+#     # Replace padding tokens with -100 in labels
+#     model_inputs["labels"] = torch.where(
+#         model_inputs["labels"] == tokenizer.pad_token_id, 
+#         torch.tensor(-100), 
+#         model_inputs["labels"]
+#     )
     
-    return model_inputs
+#     return model_inputs
 
-def preprocess_function_causal_lm(examples, tokenizer, input_column_name="text", target_column_name="summary"):
-    # Tokenize inputs with truncation and padding
-    model_inputs = tokenizer(
-        examples[input_column_name], 
-        truncation=True, 
-        padding='max_length',  # Use max_length padding instead of True
-        max_length=tokenizer.model_max_length,  # Ensure consistent max length
-        return_tensors='pt'  # Return PyTorch tensors
-    )
+# def preprocess_function_causal_lm_sft_training(examples, tokenizer):
+#     inputs = []
+#     targets = []
     
-    # Tokenize labels with padding and truncation
-    with tokenizer.as_target_tokenizer():
-        labels = tokenizer(
-            examples[target_column_name], 
-            truncation=True, 
-            padding='max_length',  # Use max_length padding
-            max_length=tokenizer.model_max_length,
-            return_tensors='pt'  # Return PyTorch tensors
-        )
+#     for text, summary in zip(examples['text'], examples['summary']):
+#         # Create structured prompt
+#         full_prompt = f"### System: You are a summarization tool designed exclusively to generate concise summaries of Arabic input text.\n### Human: {text}\n### Assistant: "
+#         target = f"{summary}{tokenizer.eos_token}"
+#         inputs.append(full_prompt)
+#         targets.append(target)  # Add EOS
     
-    # Ensure labels have the same shape as input_ids
-    model_inputs["labels"] = labels["input_ids"]
+#     # Tokenize inputs and targets separately
+#     tokenized_inputs = tokenizer(
+#         inputs, 
+#         max_length=tokenizer.model_max_length,
+#         truncation=True, 
+#         padding='max_length',
+#         return_tensors="pt"
+#     )
     
-    # Replace -100 for padding tokens in labels
-    model_inputs["labels"] = torch.where(
-        model_inputs["labels"] == tokenizer.pad_token_id, 
-        torch.tensor(-100), 
-        model_inputs["labels"]
-    )
+#     # Tokenize labels with padding and truncation
+#     with tokenizer.as_target_tokenizer():
+#         tokenized_targets = tokenizer(
+#             targets,
+#             max_length=tokenizer.model_max_length,
+#             truncation=True,
+#             padding='max_length', 
+#             return_tensors="pt"
+#         )
     
-    return model_inputs
-
-def preprocess_function(examples, tokenizer, input_column_name="text", target_column_name="summary"):
-    # Tokenize inputs with truncation and padding
-    model_inputs = tokenizer(
-        examples[input_column_name], 
-        max_length=tokenizer.model_max_length, 
-        truncation=True,
-        padding='max_length',  # Use max_length padding
-        return_tensors='pt'  # Return PyTorch tensors
-    )
-
-    # Tokenize labels with padding and truncation
-    with tokenizer.as_target_tokenizer():
-        labels = tokenizer(
-            examples[target_column_name], 
-            max_length=tokenizer.model_max_length, 
-            truncation=True,
-            padding='max_length',  # Use max_length padding
-            return_tensors='pt'  # Return PyTorch tensors
-        )
-
-    # Ensure labels have the same shape as input_ids
-    model_inputs["labels"] = labels["input_ids"]
+#     # Create combined sequence
+#     input_ids = tokenized_inputs.input_ids.clone()
+#     labels = tokenized_targets.input_ids.clone()
     
-    # Replace padding tokens with -100 in labels
-    model_inputs["labels"] = torch.where(
-        model_inputs["labels"] == tokenizer.pad_token_id, 
-        torch.tensor(-100), 
-        model_inputs["labels"]
-    )
     
-    return model_inputs
+#     # Mask everything except the assistant response
+#     for i in range(len(input_ids)):
+#         # Calculate prompt length
+#         prompt_length = len(tokenizer.encode(inputs[i])) - 1  # Exclude EOS
+        
+#         # Mask input prompt in labels
+#         labels[i, :prompt_length] = -100
+        
+#         # Mask padding
+#         labels[i][labels[i] == tokenizer.pad_token_id] = -100
+        
+#     inputs = tokenizer.batch_decode(tokenized_inputs.input_ids, skip_special_tokens=True)
+#     text_labels = tokenizer.batch_decode(tokenized_targets.input_ids, skip_special_tokens=True)
+#     print(f'inputs: {inputs}')
+#     print(f'target: {text_labels}')
+#     print(f'-'*50)
+    
+#     return {
+#         "input_ids": input_ids,
+#         "attention_mask": tokenized_inputs.attention_mask,
+#         "labels": labels
+#     }
 
 def set_seed(seed):
     """ Sets the seed for reproducibility """

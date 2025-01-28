@@ -1,19 +1,17 @@
 # Which pretrained models to finetune
-# BASE_MODEL: "bert-base-arabic"                # 111M, AutoModelForMaskedLM
-# BASE_MODEL: "gpt2"                            # 137M
-# BASE_MODEL: "mt5-small"                       # 300M 13GB with BS 4 and GACC 16 and BF16
-# BASE_MODEL: "mt5-small-SFT"                   # 300M 13GB with BS 4 and GACC 16 and BF16
-# BASE_MODEL: "mt5-base"                          # 582M
-# BASE_MODEL: "mt5-base-SFT"                    # 582M
-# BASE_MODEL: "Qwen2.5-0.5B"                    # 494M
-# BASE_MODEL: "Qwen2.5-0.5B-SFT"                # 494M
+# BASE_MODEL: "bert-base-arabic"                    # 111M, AutoModelForMaskedLM
+# BASE_MODEL: "gpt2"                                # 137M
+BASE_MODEL: "mt5-small"                           # 300M 13GB with BS 4 and GACC 16 and BF16
+# BASE_MODEL: "mt5-base"                            # 582M
+# BASE_MODEL: "Qwen2.5-0.5B-SFT"                    # 494M
+# BASE_MODEL: "Falcon3-1B-Base-SFT"                 # 1B
+
 # Instruct models
-# BASE_MODEL: "Qwen2.5-0.5B-Instruct"           # 494M
-BASE_MODEL: "Falcon3-1B-Base"                   # 1B
-# BASE_MODEL: "Falcon3-1B-Base-SFT"               # 1B
-# BASE_MODEL: "Falcon3-1B-Instruct"               # 1B
-# BASE_MODEL: "Qwen2.5-3B-Instruct"               # 3B
+# BASE_MODEL: "Qwen2.5-0.5B-Instruct"               # 494M
+# BASE_MODEL: "Falcon3-1B-Instruct"                 # 1B
+# BASE_MODEL: "Qwen2.5-3B-Instruct"                 # 3B
 # BASE_MODEL: "Falcon3-3B-Instruct"
+# BASE_MODEL: "MINE"
 
 # Dataset to use
 DATASET_PATH: BounharAbdelaziz/Arabic-Synthetic-Summarization-Dataset-Filtered #"BounharAbdelaziz/Arabic-Synthetic-Summarization-Dataset"
@@ -21,18 +19,18 @@ DATASET_PATH: BounharAbdelaziz/Arabic-Synthetic-Summarization-Dataset-Filtered #
 # Training hyperparameters
 hyperparameters:
     num_train_epochs: 3                 # as after 2 we saw a small bump in loss (decreasing)
-    lr: 0.00002                         # usually 1e-4 is recommended for Qwen models but as we have a small dataset, we prefer to go slowlier
+    lr: 0.0001                         # usually 1e-4 is recommended for Qwen models but as we have a small dataset, we prefer to go slowlier
     batch_size: 2                       # 2 for 0.5B, 1 for 1B, and 2 for 3B LoRA
-    gradient_accumulation_steps: 32     # 16 for 0.5B, 32 for 1B
+    gradient_accumulation_steps: 8     # 16 for 0.5B, 32 for 1B
     # eval_accumulation_steps: 3          # to avoid OOM in eval. Slows down eval as it offloads to CPU.
     max_grad_norm: 1.0
-    warmup_steps: 100
-    warmup_ratio: 0.04 # 0.1
+    warmup_steps: 500
+    warmup_ratio: 0.1 # 0.1
 
     # LoRA
-    USE_LORA: True #False True
-    lora_r: 128
-    lora_alpha: 32
+    USE_LORA: False #False True
+    lora_r: 256
+    lora_alpha: 128
     lora_dropout: 0.05
     target_modules: 
         - "q_proj"
@@ -41,24 +39,26 @@ hyperparameters:
         - "o_proj"
 
     # Logging and saving
-    logging_steps: 25
+    logging_steps: 10
     save_steps: 50
     eval_steps: 50
 
     optimizer: "adamw_torch_fused" # uses less memory. "adamw_torch" and "adamw_torch_fused" for > 1B models to fit in < 15GB VRAM  
-    MAX_LEN: 2048 # 1024 2048 for 0.5B and 1024 for > 1B model to fit in < 15GB VRAM
+    MAX_LEN: 1024 # 1024 2048 for 0.5B and 1024 for > 1B model to fit in < 15GB VRAM
 
 # To observe how the model is performing when we increase the number of training samples
-MAX_TRAINING_SAMPLES: 5000
+MAX_TRAINING_SAMPLES: 5000 #5000
 
 # Seed for reproducibility
 SEED: 42
 
 # metric that indicates best model
-METRIC_FOR_BEST_MODEL: "rougeL"
+METRIC_FOR_BEST_MODEL: "rougeLsum" # as it is particularly useful for evaluating multi-sentence summaries or documents. Indeed, it's a variant of ROUGE-L that splits the text into sentences, computes ROUGE-L for each sentence, and then aggregates the scores.
 
 # precision in training
 FP16_TRAINING: True # False
+
+DEFAULT_CHAT_TEMPLATE: "{% for message in messages %}\n{% if message['role'] == 'user' %}\n{{ '<|user|>\n' + message['content'] + eos_token }}\n{% elif message['role'] == 'system' %}\n{{ '<|system|>\n' + message['content'] + eos_token }}\n{% elif message['role'] == 'assistant' %}\n{{ '<|assistant|>\n'  + message['content'] + eos_token }}\n{% endif %}\n{% if loop.last and add_generation_prompt %}\n{{ '<|assistant|>' }}\n{% endif %}\n{% endfor %}"
 
 MODELS_DICT:
     bert-base-arabic:
@@ -69,31 +69,16 @@ MODELS_DICT:
     gpt2:
         MODEL_PATH: "openai-community/gpt2"
         CAUSAL_LM: true
-        SFT_TRAINING: false
+        SFT_TRAINING: true
 
     mt5-small:
         MODEL_PATH: "google/mt5-small"
         CAUSAL_LM: false
         SFT_TRAINING: false
 
-    mt5-small-SFT:
-        MODEL_PATH: "google/mt5-small"
-        CAUSAL_LM: false
-        SFT_TRAINING: true
-
     mt5-base:
         MODEL_PATH: "google/mt5-base"
         CAUSAL_LM: false
-        SFT_TRAINING: false
-
-    mt5-base-SFT:
-        MODEL_PATH: "google/mt5-base"
-        CAUSAL_LM: false
-        SFT_TRAINING: true
-
-    Qwen2.5-0.5B:
-        MODEL_PATH: "Qwen/Qwen2.5-0.5B"
-        CAUSAL_LM: true
         SFT_TRAINING: false
 
     Qwen2.5-0.5B-SFT:
@@ -105,11 +90,6 @@ MODELS_DICT:
         MODEL_PATH: "Qwen/Qwen2.5-0.5B-Instruct"
         CAUSAL_LM: true
         SFT_TRAINING: true
-
-    Falcon3-1B-Base:
-        MODEL_PATH: "tiiuae/Falcon3-1B-Base"
-        CAUSAL_LM: true
-        SFT_TRAINING: false
 
     Falcon3-1B-Base-SFT:
         MODEL_PATH: "tiiuae/Falcon3-1B-Base"
@@ -128,5 +108,10 @@ MODELS_DICT:
     
     Falcon3-3B-Instruct:
         MODEL_PATH: "tiiuae/Falcon3-3B-Instruct"
+        CAUSAL_LM: true
+        SFT_TRAINING: true
+
+    MINE:
+        MODEL_PATH: "BounharAbdelaziz/Falcon3-1B-Instruct-bs-1-lr-2e-05-ep-3-wmp-100-gacc-32-gnorm-1.0-FP16-SFT-mxln-1024"
         CAUSAL_LM: true
         SFT_TRAINING: true

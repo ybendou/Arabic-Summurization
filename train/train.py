@@ -1,4 +1,5 @@
 # Import necessary libraries
+import os
 import wandb
 from transformers import (
     AutoModelForSeq2SeqLM,
@@ -12,19 +13,24 @@ from transformers import (
     # DataCollatorWithPadding,
     DataCollatorForLanguageModeling,
 )
+from my_trainers import (
+    MySeq2SeqTrainer,
+    MySFTTrainer,
+)
+from trl import SFTTrainer
+from peft import LoraConfig, get_peft_model
 from datasets import load_dataset
 import torch
 import yaml
 from pprint import pprint
 from utils import(
-    preprocess_function,
-    preprocess_function_causal_lm,
-    preprocess_function_causal_lm_sft_training,
     preprocess_logits_for_metrics,
     compute_metrics,
     compute_metrics_causal_lm,
     set_seed,
     print_trainable_params_info,
+    create_conversation,
+    apply_chat_template,
 )
 
 import warnings
@@ -46,6 +52,9 @@ if __name__ == "__main__":
     
     MODELS_DICT = config['MODELS_DICT']
     
+    DEFAULT_CHAT_TEMPLATE = "{% for message in messages %}\n{% if message['role'] == 'user' %}\n{{ '<|user|>\n' + message['content'] + eos_token }}\n{% elif message['role'] == 'system' %}\n{{ '<|system|>\n' + message['content'] + eos_token }}\n{% elif message['role'] == 'assistant' %}\n{{ '<|assistant|>\n'  + message['content'] + eos_token }}\n{% endif %}\n{% if loop.last and add_generation_prompt %}\n{{ '<|assistant|>' }}\n{% endif %}\n{% endfor %}"
+    
+    
     # Training hyperparameters
     num_train_epochs = config['hyperparameters']['num_train_epochs']
     lr = config['hyperparameters']['lr']
@@ -54,6 +63,7 @@ if __name__ == "__main__":
     max_grad_norm = config['hyperparameters']['max_grad_norm']
     warmup_steps = config['hyperparameters']['warmup_steps']
     warmup_ratio = config['hyperparameters']['warmup_ratio']
+    MAX_LEN = config['hyperparameters']['MAX_LEN']
     
     # Logging and saving
     logging_steps = config['hyperparameters']['logging_steps']
@@ -88,6 +98,8 @@ if __name__ == "__main__":
     # truncate training dataset to observe data size impact on performance
     print(f'[INFO] Truncating training samples to: {MAX_TRAINING_SAMPLES}...')
     dataset['train'] = dataset['train'].select(range(min(len(dataset['train']), MAX_TRAINING_SAMPLES)))
+    dataset['validation'] = dataset['validation'].select(range(min(len(dataset['validation']), MAX_TRAINING_SAMPLES)))
+    dataset['test'] = dataset['test'].select(range(min(len(dataset['test']), MAX_TRAINING_SAMPLES)))
     print(f'[INFO] Dataset loaded: {dataset}')
     print('-'*50)
     
@@ -103,11 +115,11 @@ if __name__ == "__main__":
             torch_dtype=torch_dtype, 
         )
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+    tokenizer.padding_side = 'right' # left
     
     if config['hyperparameters']['USE_LORA']:
         # Apply LoRA
         print(f"[INFO] Training with LoRA")
-        from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
         
         # Define LoRA configuration
         lora_config = LoraConfig(
@@ -127,30 +139,35 @@ if __name__ == "__main__":
 
         print('-'*50)
     
-    # Set a maximum length for tokenization
+    # Set reasonable default for models without max length
     tokenizer.model_max_length = config['hyperparameters']['MAX_LEN']
+
+    # Set pad_token_id equal to the eos_token_id if not set
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+        
     if BASE_MODEL == "gpt2":
         tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-    
+        
     print(f'[INFO] Model and Tokenizer loaded: {MODEL_PATH}, version: {BASE_MODEL}, IS_SFT_TRAINING: {IS_SFT_TRAINING}, FP16_TRAINING: {FP16_TRAINING}')
     print('-'*50)
     
     # Project name for loggings and savings
-    project_name = "arabic-summarization"
+    project_name = "arabic-summarization-v6"
     fp16 = '-FP16' if FP16_TRAINING else ''
     sft = '-SFT' if IS_SFT_TRAINING else ''
     # LoRA params
-    lora_training = f'-lora' if config['hyperparameters']['USE_LORA'] else ''
+    # lora_training = f'-lo' if config['hyperparameters']['USE_LORA'] else ''
     lora_r = f'-r-{config['hyperparameters']['lora_r']}' if config['hyperparameters']['USE_LORA'] else ''
     lora_alpha = f'-a-{config['hyperparameters']['lora_alpha']}' if config['hyperparameters']['USE_LORA'] else ''
     lora_dropout = f'-d-{config['hyperparameters']['lora_dropout']}' if config['hyperparameters']['USE_LORA'] else ''
     
-    run_name = f'{MODEL_PATH.split("/")[-1]}-bs-{batch_size}-lr-{lr}-ep-{num_train_epochs}-wp-{warmup_steps}-gacc-{gradient_accumulation_steps}-gnm-{max_grad_norm}{fp16}{sft}-mx-{config['hyperparameters']['MAX_LEN']}{lora_training}{lora_r}{lora_alpha}'
+    run_name = f'{MODEL_PATH.split("/")[-1]}-bs-{batch_size}-lr-{lr}-ep-{num_train_epochs}-wp-{warmup_ratio}-gacc-{gradient_accumulation_steps}-gnm-{max_grad_norm}{fp16}{sft}-mx-{config['hyperparameters']['MAX_LEN']}{lora_r}{lora_alpha}-v5'
     assert '--' not in run_name, f"[WARN] Detected -- in run_name. This will cause a push_to_hub error! Found run_name={run_name} "
-    assert len(run_name) < 96, f"[WARN] run_name too long. This will cause a push_to_hub error! Consider squeezing it. Found run_name={run_name}"
+    assert len(run_name) < 96, f"[WARN] run_name too long, found len(run_name)={len(run_name)} > 96. This will cause a push_to_hub error! Consider squeezing it. Found run_name={run_name}"
 
     # Where to save the model
-    MODEL_RUN_SAVE_PATH = f"BounharAbdelaziz/Arabic-Summarization/{run_name}"
+    MODEL_RUN_SAVE_PATH = f"BounharAbdelaziz/{run_name}"
     
     # Save the configuration to a .txt file
     output_filename = f"./run_configs/{run_name}.txt"
@@ -184,91 +201,76 @@ if __name__ == "__main__":
 
     if IS_CAUSAL_LM:
         
-        if IS_SFT_TRAINING:
-            # Apply preprocessing
-            tokenized_datasets = dataset.map(lambda x: preprocess_function_causal_lm_sft_training(x, tokenizer), batched=True)
-            
-            # Training arguments
-            training_args = TrainingArguments(
-                output_dir=MODEL_RUN_SAVE_PATH,
-                evaluation_strategy="steps",
-                learning_rate=lr,
-                warmup_ratio=warmup_ratio,
-                per_device_train_batch_size=batch_size,
-                per_device_eval_batch_size=batch_size,
-                num_train_epochs=num_train_epochs,
-                save_total_limit=1,
-                bf16=config['FP16_TRAINING'],
-                fp16_full_eval=config['FP16_TRAINING'],
-                logging_steps=logging_steps,
-                save_steps=save_steps,
-                eval_steps=eval_steps,
-                report_to="wandb",
-                push_to_hub=False,
-                metric_for_best_model=config['METRIC_FOR_BEST_MODEL'],
-                gradient_checkpointing=True,
-                load_best_model_at_end=True,
-                optim=config['hyperparameters']['optimizer'],
-                gradient_checkpointing_kwargs={"use_reentrant": False} if config['hyperparameters']['USE_LORA'] else None,  # Avoids gradient issues in backprop when LoRA is set to True. # https://discuss.huggingface.co/t/how-to-combine-lora-and-gradient-checkpointing-in-whisper/50629
-            )
-            
-            # Initialize Trainer
-            trainer = Trainer(
-                model=model,
-                args=training_args,
-                train_dataset=tokenized_datasets["train"],
-                eval_dataset=tokenized_datasets["validation"],
-                data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
-                compute_metrics=lambda x : compute_metrics_causal_lm(x, tokenizer),
-                preprocess_logits_for_metrics=preprocess_logits_for_metrics, # avoids OOM in eval
-            )
-            
-        else:
-            
-            print(f'[INFO] Running preprocess_function_causal_lm')
-            # Apply preprocessing
-            tokenized_datasets = dataset.map(lambda x: preprocess_function_causal_lm(x, tokenizer), batched=True)
-            
-            # Training arguments
-            training_args = TrainingArguments(
-                output_dir=MODEL_RUN_SAVE_PATH,
-                evaluation_strategy="steps",
-                learning_rate=lr,
-                warmup_ratio=warmup_ratio,
-                per_device_train_batch_size=batch_size,
-                per_device_eval_batch_size=batch_size,
-                num_train_epochs=num_train_epochs,
-                save_total_limit=1,
-                bf16=config['FP16_TRAINING'],
-                fp16_full_eval=config['FP16_TRAINING'],
-                logging_steps=logging_steps,
-                save_steps=save_steps,
-                eval_steps=eval_steps,
-                report_to="wandb",
-                push_to_hub=False,
-                metric_for_best_model=config['METRIC_FOR_BEST_MODEL'],
-                gradient_checkpointing=True,
-                load_best_model_at_end=True,
-                optim=config['hyperparameters']['optimizer'],
-                gradient_checkpointing_kwargs={"use_reentrant": False} if config['hyperparameters']['USE_LORA'] else None,  # Avoids gradient issues in backprop when LoRA is set to True. # https://discuss.huggingface.co/t/how-to-combine-lora-and-gradient-checkpointing-in-whisper/50629
-            )
+        # Set chat template
+        tokenizer.chat_template = DEFAULT_CHAT_TEMPLATE
         
-            # Initialize Trainer
-            trainer = Trainer(
-                model=model,
-                args=training_args,
-                train_dataset=tokenized_datasets["train"],
-                eval_dataset=tokenized_datasets["validation"],
-                data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
-                compute_metrics=lambda x : compute_metrics_causal_lm(x, tokenizer),
-                preprocess_logits_for_metrics=preprocess_logits_for_metrics, # avoids OOM in eval
-            )
+        # Transform the dataset into a conversational format
+        dataset["train"] = dataset["train"].map(create_conversation, remove_columns=["text"])
+        dataset["validation"] = dataset["validation"].map(create_conversation, remove_columns=["text"])
+        dataset["test"] = dataset["test"].map(create_conversation, remove_columns=["text"])
+
+        dataset = dataset.map(
+            apply_chat_template,
+            num_proc=os.cpu_count(),
+            fn_kwargs={"tokenizer": tokenizer},
+            remove_columns=["messages"],
+            desc="Applying chat template..."
+        )
+        
+        # print(f'dataset["train"][0]: {dataset["train"][0]}')
+        # print(f'dataset["validation"][0]: {dataset["validation"][0]}')
+        # print(f'dataset["test"][0]: {dataset["test"][0]}')
+    
+        # Create the splits
+        train_dataset = dataset["train"]
+        eval_dataset = dataset["validation"]
+        test_dataset = dataset["test"]
+        
+        # Training arguments
+        training_args = TrainingArguments(
+            output_dir=MODEL_RUN_SAVE_PATH,
+            evaluation_strategy="steps",
+            learning_rate=lr,
+            warmup_ratio=warmup_ratio,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            per_device_train_batch_size=batch_size,
+            per_device_eval_batch_size=batch_size,
+            num_train_epochs=num_train_epochs,
+            save_total_limit=1,
+            bf16=config['FP16_TRAINING'],
+            fp16_full_eval=config['FP16_TRAINING'],
+            logging_steps=logging_steps,
+            save_steps=save_steps,
+            eval_steps=eval_steps,
+            report_to="wandb",
+            push_to_hub=False,
+            metric_for_best_model=config['METRIC_FOR_BEST_MODEL'],
+            gradient_checkpointing=True,
+            # use_cache = False, # as we set gradient_checkpointing=True
+            load_best_model_at_end=True,
+            optim=config['hyperparameters']['optimizer'],
+            gradient_checkpointing_kwargs={"use_reentrant": False} if config['hyperparameters']['USE_LORA'] else None,  # Avoids gradient issues in backprop when LoRA is set to True. # https://discuss.huggingface.co/t/how-to-combine-lora-and-gradient-checkpointing-in-whisper/50629
+        )
+
+        # Initialize Trainer
+        trainer = SFTTrainer(
+            model=model,
+            tokenizer=tokenizer,
+            args=training_args,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            dataset_text_field="text",
+            compute_metrics=lambda x : compute_metrics_causal_lm(x, tokenizer),
+            preprocess_logits_for_metrics=preprocess_logits_for_metrics, # avoids OOM in eval
+        )
         
     else:
-        
-        # Apply preprocessing
-        tokenized_datasets = dataset.map(lambda x: preprocess_function(x, tokenizer), batched=True)
-    
+        # we train a Seq2Seq model
+        # Get data splits
+        train_dataset = dataset["train"]
+        eval_dataset = dataset["validation"]
+        test_dataset = dataset["test"]
+
         # Training arguments
         training_args = Seq2SeqTrainingArguments(
             output_dir=MODEL_RUN_SAVE_PATH,
@@ -277,6 +279,7 @@ if __name__ == "__main__":
             warmup_ratio=warmup_ratio,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
+            gradient_accumulation_steps=gradient_accumulation_steps,
             num_train_epochs=num_train_epochs,
             save_total_limit=1,
             predict_with_generate=True,
@@ -293,20 +296,33 @@ if __name__ == "__main__":
         trainer = Seq2SeqTrainer(
             model=model,
             args=training_args,
-            train_dataset=tokenized_datasets["train"],
-            eval_dataset=tokenized_datasets["validation"],
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
             tokenizer=tokenizer,
             data_collator=DataCollatorForSeq2Seq(tokenizer, model=model),
             compute_metrics=lambda x : compute_metrics(x, tokenizer),
         )
-
+        
     # Train the model
     trainer.train()
 
     # Push to Hugging Face Hub
-    print("[INFO] Pushing to hub...")
-    trainer.push_to_hub(MODEL_RUN_SAVE_PATH)
+    print("[INFO] Preparing to push to hub...")
+
+    if config['hyperparameters']['USE_LORA']:
+        print("[INFO] Merging LoRA weights before pushing...")
+        from peft import merge_and_unload
+        model = merge_and_unload(model)
+        
+    # Save the model and tokenizer locally before pushing
+    trainer.save_model(MODEL_RUN_SAVE_PATH)  # This saves the model, tokenizer, and config
+    tokenizer.save_pretrained(MODEL_RUN_SAVE_PATH)
+
+    # Push to the hub
+    print("[INFO] Pushing model and tokenizer to Hugging Face Hub...")
+    trainer.push_to_hub()
+    tokenizer.push_to_hub(MODEL_RUN_SAVE_PATH)
     
     # Evaluate on test set
-    test_results = trainer.evaluate(tokenized_datasets["test"])
+    test_results = trainer.evaluate(test_dataset)
     print(f'[INFO] Results on test set: {test_results}')
