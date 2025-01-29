@@ -1,15 +1,8 @@
 # Import necessary libraries
 import numpy as np
 from evaluate import load
-from nltk.tokenize import RegexpTokenizer
 import torch
-import csv
 import re
-# from torchmetrics.text.rouge import ROUGEScore
-# from torchmetrics.text.bleu import BLEUScore
-
-# rouge_metric = ROUGEScore()
-# bleu_metric = BLEUScore()
 
 from evaluate import load
 rouge = load('rouge')

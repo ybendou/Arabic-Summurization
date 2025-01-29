@@ -7,15 +7,14 @@ SYSTEM_PROMPT: |
     Return only a number (0, 1, or 2). Never deviate from this behavior! No additional text, apologies, emojis, or commentary is permitted. Never add diacritics in the output. Output only the score number!
 
 JUDGE_MODEL_NAME: "Qwen/Qwen2.5-7B-Instruct-AWQ"
-BATCH_SIZE: 16
 
 EVALUATE_MODELS: 
     # - "BounharAbdelaziz/Falcon3-1B-Instruct-bs-1-lr-2e-05-ep-3-wmp-100-gacc-32-gnorm-1.0-FP16-SFT-mxln-1024"
     # - "BounharAbdelaziz/Falcon3-1B-Base-bs-2-lr-2e-05-ep-4-wp-100-gacc-32-gnm-1.0-FP16-SFT-mx-1024-v2"
     - "BounharAbdelaziz/Qwen2.5-0.5B-Instruct-bs-2-lr-1e-05-ep-1-wp-100-gacc-32-gnm-1.0-FP16-SFT-mx-2048-v2"
     # - "BounharAbdelaziz/Falcon3-1B-Base-bs-2-lr-2e-05-ep-4-wp-100-gacc-32-gnm-1.0-FP16-SFT-mx-1024-v2"
-batch_size: 32
 MAX_LEN: 2048
+BATCH_SIZE: 16
 
 MODEL_PATH: "BounharAbdelaziz/Falcon3-1B-Base-bs-2-lr-2e-05-ep-4-wp-100-gacc-32-gnm-1.0-FP16-SFT-mx-1024-v2" # "Qwen/Qwen2.5-0.5B-Instruct" #"tiiuae/Falcon3-1B-Instruct"
 # Dataset to use

@@ -6,16 +6,11 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     DataCollatorForSeq2Seq,
-    Trainer,
     TrainingArguments,
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
     # DataCollatorWithPadding,
-    DataCollatorForLanguageModeling,
-)
-from my_trainers import (
-    MySeq2SeqTrainer,
-    MySFTTrainer,
+    # DataCollatorForLanguageModeling,
 )
 from trl import SFTTrainer
 from peft import LoraConfig, get_peft_model
@@ -216,10 +211,6 @@ if __name__ == "__main__":
             remove_columns=["messages"],
             desc="Applying chat template..."
         )
-        
-        # print(f'dataset["train"][0]: {dataset["train"][0]}')
-        # print(f'dataset["validation"][0]: {dataset["validation"][0]}')
-        # print(f'dataset["test"][0]: {dataset["test"][0]}')
     
         # Create the splits
         train_dataset = dataset["train"]
