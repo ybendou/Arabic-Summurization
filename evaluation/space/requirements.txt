@@ -1,5 +1,6 @@
 gradio
 pandas
 transformers
+--extra-index-url https://download.pytorch.org/whl/cu113
 torch
 datasets
