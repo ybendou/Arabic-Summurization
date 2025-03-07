@@ -12,9 +12,12 @@ BASE_MODEL: "mt5-base"                            # 582M
 # BASE_MODEL: "Qwen2.5-3B-Instruct"                 # 3B
 # BASE_MODEL: "Falcon3-3B-Instruct"
 
+# Project Name 
+PROJECT_NAME: "Darija"
+
 # Dataset to use
 DATASET_PATH: BounharAbdelaziz/Arabic-Synthetic-Summarization-Dataset-Filtered # We use the dataset filtered out from samples containing chinese characters "BounharAbdelaziz/Arabic-Synthetic-Summarization-Dataset"
-
+TASKS: ["arabic_dialect_identification"]
 # Training hyperparameters
 hyperparameters:
     num_train_epochs: 3                 # as after 2 we saw a small bump in loss (decreasing)
@@ -43,7 +46,7 @@ hyperparameters:
     eval_steps: 50
 
     optimizer: "adamw_torch_fused" # uses less memory. "adamw_torch" and "adamw_torch_fused" for > 1B models to fit in < 15GB VRAM  
-    MAX_LEN: 1024 # 1024 or 2048. For 0.5B 2048, and 1024 for > 1B model to fit in < 15GB VRAM
+    MAX_LEN: 2048 # 1024 or 2048. For 0.5B 2048, and 1024 for > 1B model to fit in < 15GB VRAM
 
 # To observe how the model is performing when we increase the number of training samples
 MAX_TRAINING_SAMPLES: 5000 #5000

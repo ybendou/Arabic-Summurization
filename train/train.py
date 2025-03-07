@@ -2,29 +2,18 @@
 import os
 import wandb
 from transformers import (
-    AutoModelForSeq2SeqLM,
     AutoModelForCausalLM,
     AutoTokenizer,
-    DataCollatorForSeq2Seq,
     TrainingArguments,
-    Seq2SeqTrainer,
-    Seq2SeqTrainingArguments,
-    # DataCollatorWithPadding,
-    # DataCollatorForLanguageModeling,
 )
 from trl import SFTTrainer
 from peft import LoraConfig, get_peft_model
-from datasets import load_dataset
 import torch
 import yaml
 from pprint import pprint
 from utils import(
-    preprocess_logits_for_metrics,
-    compute_metrics_seq2seq,
-    compute_metrics_causal_lm,
     set_seed,
     print_trainable_params_info,
-    create_conversation,
     apply_chat_template,
 )
 
@@ -67,7 +56,8 @@ if __name__ == "__main__":
 
     # Training data path
     TRAIN_DATA_PATH = config['DATASET_PATH']
-    
+    TASKS = config['TASKS']
+
     # base model path
     BASE_MODEL = config['BASE_MODEL']
     MODEL_PATH = MODELS_DICT[BASE_MODEL]['MODEL_PATH']
@@ -86,31 +76,14 @@ if __name__ == "__main__":
     # set seed
     SEED = config['SEED']
     set_seed(SEED)
-   
-    # Load dataset
-    dataset = load_dataset(TRAIN_DATA_PATH)  # Replace with your dataset path
-    
-    # truncate training dataset to observe data size impact on performance
-    print(f'[INFO] Truncating training samples to: {MAX_TRAINING_SAMPLES}...')
-    dataset['train'] = dataset['train'].select(range(min(len(dataset['train']), MAX_TRAINING_SAMPLES)))
-    dataset['validation'] = dataset['validation'].select(range(min(len(dataset['validation']), MAX_TRAINING_SAMPLES)))
-    dataset['test'] = dataset['test'].select(range(min(len(dataset['test']), MAX_TRAINING_SAMPLES)))
-    print(f'[INFO] Dataset loaded: {dataset}')
-    print('-'*50)
-    
+       
     # Load tokenizer and model
-    if IS_CAUSAL_LM:
-        model = AutoModelForCausalLM.from_pretrained(
-            MODEL_PATH,
-            torch_dtype=torch_dtype,
-        )
-    else:
-        model = AutoModelForSeq2SeqLM.from_pretrained(
-            MODEL_PATH,
-            torch_dtype=torch_dtype, 
-        )
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_PATH,
+        torch_dtype=torch_dtype,
+    )
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-    tokenizer.padding_side = 'left' if IS_CAUSAL_LM else 'right'
+    tokenizer.padding_side = 'left'
     
     if config['hyperparameters']['USE_LORA']:
         # Apply LoRA
@@ -141,14 +114,11 @@ if __name__ == "__main__":
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
         
-    if BASE_MODEL == "gpt2":
-        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-        
     print(f'[INFO] Model and Tokenizer loaded: {MODEL_PATH}, version: {BASE_MODEL}, IS_SFT_TRAINING: {IS_SFT_TRAINING}, FP16_TRAINING: {FP16_TRAINING}')
     print('-'*50)
     
     # Project name for loggings and savings
-    project_name = "arabic-summarization-v6"
+    project_name = config["PROJECT_NAME"]
     fp16 = '-FP16' if FP16_TRAINING else ''
     sft = '-SFT' if IS_SFT_TRAINING else ''
     # LoRA params
@@ -162,7 +132,8 @@ if __name__ == "__main__":
     assert len(run_name) < 96, f"[WARN] run_name too long, found len(run_name)={len(run_name)} > 96. This will cause a push_to_hub error! Consider squeezing it. Found run_name={run_name}"
 
     # Where to save the model
-    MODEL_RUN_SAVE_PATH = f"BounharAbdelaziz/{run_name}"
+    #MODEL_RUN_SAVE_PATH = f"BounharAbdelaziz/{run_name}"
+    MODEL_RUN_SAVE_PATH = f"ybendou/{run_name}"
     
     # Save the configuration to a .txt file
     output_filename = f"./run_configs/{run_name}.txt"
@@ -191,125 +162,69 @@ if __name__ == "__main__":
             "gradient_accumulation_steps": gradient_accumulation_steps,
             # "weight_decay": weight_decay,
             "dataset": TRAIN_DATA_PATH,
+            "tasks": TASKS,
+            "chat_template": DEFAULT_CHAT_TEMPLATE,
+            "max_context_length": config['hyperparameters']['MAX_LEN'],
         }
     )
 
-    if IS_CAUSAL_LM:
-        
-        # Set chat template
-        tokenizer.chat_template = DEFAULT_CHAT_TEMPLATE
-        
-        # Transform the dataset into a conversational format
-        dataset["train"] = dataset["train"].map(create_conversation, remove_columns=["text"])
-        dataset["validation"] = dataset["validation"].map(create_conversation, remove_columns=["text"])
-        dataset["test"] = dataset["test"].map(create_conversation, remove_columns=["text"])
+    # Set chat template
+    tokenizer.chat_template = DEFAULT_CHAT_TEMPLATE
 
-        dataset = dataset.map(
-            apply_chat_template,
-            num_proc=os.cpu_count(),
-            fn_kwargs={"tokenizer": tokenizer},
-            remove_columns=["messages"],
-            desc="Applying chat template..."
-        )
+    dataset = get_datasets(TRAIN_DATA_PATH, TASKS)  # Replace with your dataset path
+    # Transform the dataset into a conversational format
+    dataset = dataset.map(
+        apply_chat_template,
+        num_proc=os.cpu_count(),
+        fn_kwargs={"tokenizer": tokenizer},
+        remove_columns=["messages"],
+        desc="Applying chat template..."
+    )
+
+    # Create the splits
+    train_dataset = dataset["train"]
+    eval_dataset = dataset["validation"]
+    test_dataset = dataset["test"]
     
-        # Create the splits
-        train_dataset = dataset["train"]
-        eval_dataset = dataset["validation"]
-        test_dataset = dataset["test"]
-        
-        # Training arguments
-        training_args = TrainingArguments(
-            output_dir=MODEL_RUN_SAVE_PATH,
-            evaluation_strategy="steps",
-            learning_rate=lr,
-            warmup_ratio=warmup_ratio,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            per_device_train_batch_size=batch_size,
-            per_device_eval_batch_size=batch_size,
-            num_train_epochs=num_train_epochs,
-            save_total_limit=1,
-            bf16=config['FP16_TRAINING'],
-            fp16_full_eval=config['FP16_TRAINING'],
-            logging_steps=logging_steps,
-            save_steps=save_steps,
-            eval_steps=eval_steps,
-            report_to="wandb",
-            push_to_hub=False,
-            metric_for_best_model=config['METRIC_FOR_BEST_MODEL'],
-            gradient_checkpointing=True,
-            # use_cache = False, # as we set gradient_checkpointing=True
-            load_best_model_at_end=True,
-            optim=config['hyperparameters']['optimizer'],
-            gradient_checkpointing_kwargs={"use_reentrant": False} if config['hyperparameters']['USE_LORA'] else None,  # Avoids gradient issues in backprop when LoRA is set to True. # https://discuss.huggingface.co/t/how-to-combine-lora-and-gradient-checkpointing-in-whisper/50629
-        )
+    # Training arguments
+    training_args = TrainingArguments(
+        output_dir=MODEL_RUN_SAVE_PATH,
+        evaluation_strategy="steps",
+        learning_rate=lr,
+        warmup_ratio=warmup_ratio,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        per_device_train_batch_size=batch_size,
+        per_device_eval_batch_size=batch_size,
+        num_train_epochs=num_train_epochs,
+        save_total_limit=1,
+        bf16=config['FP16_TRAINING'],
+        fp16_full_eval=config['FP16_TRAINING'],
+        logging_steps=logging_steps,
+        save_steps=save_steps,
+        eval_steps=eval_steps,
+        report_to="wandb",
+        push_to_hub=False,
+        metric_for_best_model=config['METRIC_FOR_BEST_MODEL'],
+        gradient_checkpointing=True,
+        # use_cache = False, # as we set gradient_checkpointing=True
+        load_best_model_at_end=True,
+        optim=config['hyperparameters']['optimizer'],
+        gradient_checkpointing_kwargs={"use_reentrant": False} if config['hyperparameters']['USE_LORA'] else None,  # Avoids gradient issues in backprop when LoRA is set to True. # https://discuss.huggingface.co/t/how-to-combine-lora-and-gradient-checkpointing-in-whisper/50629
+    )
 
-        # Initialize Trainer
-        trainer = SFTTrainer(
-            model=model,
-            tokenizer=tokenizer,
-            args=training_args,
-            train_dataset=train_dataset,
-            eval_dataset=eval_dataset,
-            dataset_text_field="text",
-            compute_metrics=lambda x : compute_metrics_causal_lm(x, tokenizer),
-            preprocess_logits_for_metrics=preprocess_logits_for_metrics, # avoids OOM in eval
-        )
-        
-    else:
-        # we train a Seq2Seq model
-        # Get data splits
-        train_dataset = dataset["train"]
-        eval_dataset = dataset["validation"]
-        test_dataset = dataset["test"]
-        
-        def preprocess_function(examples):
-            # Tokenize the inputs (text) and targets (summary)
-            model_inputs = tokenizer(examples["text"], max_length=config['hyperparameters']['MAX_LEN'], truncation=True)
-
-            # Tokenize the targets with the `text_target` argument
-            with tokenizer.as_target_tokenizer():
-                labels = tokenizer(examples["summary"], max_length=config['hyperparameters']['MAX_LEN'], truncation=True)
-
-            model_inputs["labels"] = labels["input_ids"]
-            return model_inputs
-
-        # Apply the preprocessing function to the datasets
-        train_dataset = train_dataset.map(preprocess_function, batched=True)
-        eval_dataset = eval_dataset.map(preprocess_function, batched=True)
-        test_dataset = test_dataset.map(preprocess_function, batched=True)
-
-        # Training arguments
-        training_args = Seq2SeqTrainingArguments(
-            output_dir=MODEL_RUN_SAVE_PATH,
-            evaluation_strategy="steps",
-            learning_rate=lr,
-            warmup_ratio=warmup_ratio,
-            per_device_train_batch_size=batch_size,
-            per_device_eval_batch_size=batch_size,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            num_train_epochs=num_train_epochs,
-            save_total_limit=1,
-            predict_with_generate=True,
-            logging_steps=logging_steps,
-            save_steps=save_steps,
-            eval_steps=eval_steps,
-            report_to="wandb",
-            push_to_hub=False,
-            metric_for_best_model=config['METRIC_FOR_BEST_MODEL'],
-            gradient_checkpointing=True,
-            load_best_model_at_end=True,
-        )
+    # Initialize Trainer
+    trainer = SFTTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        args=training_args,
+        train_dataset=train_dataset,
+        # eval_dataset=eval_dataset,
+        dataset_text_field="text",
+        # compute_metrics=lambda x : compute_metrics_causal_lm(x, tokenizer),
+        # preprocess_logits_for_metrics=preprocess_logits_for_metrics, # avoids OOM in eval
+    )
     
-        trainer = Seq2SeqTrainer(
-            model=model,
-            args=training_args,
-            train_dataset=train_dataset,
-            eval_dataset=eval_dataset,
-            tokenizer=tokenizer,
-            data_collator=DataCollatorForSeq2Seq(tokenizer, model=model),
-            compute_metrics=lambda x : compute_metrics_seq2seq(x, tokenizer),
-        )
-        
+
     # Train the model
     trainer.train()
 
